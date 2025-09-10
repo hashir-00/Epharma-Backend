@@ -1,12 +1,8 @@
 import { Response } from 'express';
-import { AppDataSource } from '../config/database';
-import { User } from '../entities/User';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { AuthUtils } from '../utils/auth';
 import { ApiResponse } from '../types';
-import { validate } from 'class-validator';
-import { logger } from '../utils/logger';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
+import { asyncHandler } from '../middleware/errorHandler';
+import { UserService } from '../services/UserService';
 
 /**
  * @swagger
@@ -67,16 +63,7 @@ export class UserController {
    *                   $ref: '#/components/schemas/UserProfile'
    */
   static getProfile = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const userRepository = AppDataSource.getRepository(User);
-    
-    const user = await userRepository.findOne({
-      where: { id: req.user!.userId },
-      select: ['id', 'firstName', 'lastName', 'email', 'phone', 'address', 'dateOfBirth', 'isActive', 'isEmailVerified', 'createdAt', 'updatedAt']
-    });
-
-    if (!user) {
-      throw new AppError('User not found', 404);
-    }
+    const user = await UserService.getUserProfile(req.user!.userId);
 
     const response: ApiResponse = {
       success: true,
@@ -118,45 +105,19 @@ export class UserController {
    *         description: Profile updated successfully
    */
   static updateProfile = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const userRepository = AppDataSource.getRepository(User);
-    
-    const user = await userRepository.findOne({ where: { id: req.user!.userId } });
-    if (!user) {
-      throw new AppError('User not found', 404);
-    }
+    const { firstName, lastName, phone, address, age } = req.body;
 
-    const { firstName, lastName, phone, address, dateOfBirth } = req.body;
-
-    // Update user fields
-    if (firstName) user.firstName = firstName;
-    if (lastName) user.lastName = lastName;
-    if (phone) user.phone = phone;
-    if (address) user.address = address;
-    if (dateOfBirth) user.dateOfBirth = new Date(dateOfBirth);
-
-    // Validate updated user data
-    const errors = await validate(user);
-    if (errors.length > 0) {
-      throw new AppError('Validation failed', 400);
-    }
-
-    await userRepository.save(user);
-
-    logger.info(`User profile updated: ${user.email}`);
+    const updatedUser = await UserService.updateUserProfile(req.user!.userId, {
+      firstName,
+      lastName,
+      phone,
+      address,
+      age
+    });
 
     const response: ApiResponse = {
       success: true,
-      data: {
-        id: user.id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        phone: user.phone,
-        address: user.address,
-        dateOfBirth: user.dateOfBirth,
-        isActive: user.isActive,
-        isEmailVerified: user.isEmailVerified
-      },
+      data: updatedUser,
       message: 'Profile updated successfully'
     };
 
@@ -191,34 +152,12 @@ export class UserController {
    *         description: Password changed successfully
    */
   static changePassword = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const userRepository = AppDataSource.getRepository(User);
-    
     const { currentPassword, newPassword } = req.body;
 
-    if (!currentPassword || !newPassword) {
-      throw new AppError('Current password and new password are required', 400);
-    }
-
-    if (newPassword.length < 6) {
-      throw new AppError('New password must be at least 6 characters long', 400);
-    }
-
-    const user = await userRepository.findOne({ where: { id: req.user!.userId } });
-    if (!user) {
-      throw new AppError('User not found', 404);
-    }
-
-    // Verify current password
-    const isValidPassword = await AuthUtils.comparePassword(currentPassword, user.password);
-    if (!isValidPassword) {
-      throw new AppError('Current password is incorrect', 400);
-    }
-
-    // Hash new password
-    user.password = await AuthUtils.hashPassword(newPassword);
-    await userRepository.save(user);
-
-    logger.info(`Password changed for user: ${user.email}`);
+    await UserService.changePassword(req.user!.userId, {
+      currentPassword,
+      newPassword
+    });
 
     const response: ApiResponse = {
       success: true,
@@ -241,17 +180,7 @@ export class UserController {
    *         description: Account deactivated successfully
    */
   static deactivateAccount = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const userRepository = AppDataSource.getRepository(User);
-    
-    const user = await userRepository.findOne({ where: { id: req.user!.userId } });
-    if (!user) {
-      throw new AppError('User not found', 404);
-    }
-
-    user.isActive = false;
-    await userRepository.save(user);
-
-    logger.info(`Account deactivated for user: ${user.email}`);
+    await UserService.deactivateAccount(req.user!.userId);
 
     const response: ApiResponse = {
       success: true,

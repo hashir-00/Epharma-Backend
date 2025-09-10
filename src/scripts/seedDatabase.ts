@@ -1,11 +1,10 @@
 import 'reflect-metadata';
 import { AppDataSource } from '../config/database';
 import { User } from '../entities/User';
-import { Admin } from '../entities/Admin';
 import { Pharmacy } from '../entities/Pharmacy';
 import { Product } from '../entities/Product';
 import { AuthUtils } from '../utils/auth';
-import { ProductStatus } from '../types';
+import { ProductStatus, UserRole } from '../types';
 import { logger } from '../utils/logger';
 
 async function createSampleData() {
@@ -14,18 +13,17 @@ async function createSampleData() {
     logger.info('Database connected successfully');
 
     const userRepository = AppDataSource.getRepository(User);
-    const adminRepository = AppDataSource.getRepository(Admin);
     const pharmacyRepository = AppDataSource.getRepository(Pharmacy);
     const productRepository = AppDataSource.getRepository(Product);
 
     // Create sample admin
-    const admin = new Admin();
+    const admin = new User();
     admin.firstName = 'Admin';
     admin.lastName = 'User';
     admin.email = 'admin@epharmacy.com';
     admin.password = await AuthUtils.hashPassword('admin123');
-    admin.role = 'admin';
-    await adminRepository.save(admin);
+    admin.role = UserRole.ADMIN;
+    await userRepository.save(admin);
     logger.info('Sample admin created: admin@epharmacy.com / admin123');
 
     // Create sample users

@@ -1,60 +1,77 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany } from 'typeorm';
-import { IsEmail, IsNotEmpty } from 'class-validator';
-import { Exclude } from 'class-transformer';
-import { Prescription } from './Prescription';
-import { Order } from './Order';
+import {
+Entity,
+PrimaryGeneratedColumn,
+Column,
+CreateDateColumn,
+UpdateDateColumn,
+OneToMany,
+} from "typeorm";
+import { IsEmail, IsInt, IsNotEmpty } from "class-validator";
+import { Exclude } from "class-transformer";
+import { Prescription } from "./Prescription";
+import { Order } from "./Order";
+import {  UserRole } from "../types";
 
-
-@Entity('users')
+@Entity("users")
 export class User {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+@PrimaryGeneratedColumn("uuid")
+id: string;
 
-  @Column()
-  @IsNotEmpty()
-  firstName: string;
+@Column()
+@IsNotEmpty()
+firstName: string;
 
-  @Column()
-  @IsNotEmpty()
-  lastName: string;
+@Column()
+@IsNotEmpty()
+lastName: string;
 
-  @Column({ unique: true })
-  @IsEmail()
-  email: string;
+@Column({
+type: "enum",
+enum: UserRole,
+default: UserRole.USER,
+})
+role: UserRole;
 
-  @Column()
-  @Exclude()
-  password: string;
+@Column({ unique: true })
+@IsEmail()
+email: string;
 
-  @Column({ nullable: true })
-  phone: string;
+@Column({ nullable: true })
+@IsInt()
+age: number;
 
-  @Column({ type: 'text', nullable: true })
-  address: string;
+@Column()
+@Exclude()
+password: string;
 
-  @Column({ nullable: true })
-  dateOfBirth?: Date;
+@Column({ nullable: true })
+phone: string;
 
-  @Column({ default: true })
-  isActive: boolean;
+@Column({ type: "text", nullable: true })
+address: string;
 
-  @Column({ default: false })
-  isEmailVerified: boolean;
+@Column({ nullable: true })
+dateOfBirth?: Date;
 
-  @CreateDateColumn()
-  createdAt: Date;
+@Column({ default: true })
+isActive: boolean;
 
-  @UpdateDateColumn()
-  updatedAt: Date;
+@Column({ default: false })
+isEmailVerified: boolean;
 
-  @OneToMany(() => Prescription, prescription => prescription.user)
-  prescriptions: Prescription[];
+@CreateDateColumn()
+createdAt: Date;
 
-  @OneToMany(() => Order, order => order.user)
-  orders: Order[];
+@UpdateDateColumn()
+updatedAt: Date;
 
-  // Virtual property for full name
-  get fullName(): string {
-    return `${this.firstName} ${this.lastName}`;
-  }
+@OneToMany(() => Prescription, (prescription) => prescription.user)
+prescriptions: Prescription[];
+
+@OneToMany(() => Order, (order) => order.user)
+orders: Order[];
+// Virtual property for full name
+get fullName(): string {
+return `${this.firstName} ${this.lastName}`;
+}
 }

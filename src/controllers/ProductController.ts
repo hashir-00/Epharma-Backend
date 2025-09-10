@@ -1,12 +1,8 @@
 import { Request, Response } from 'express';
-import { AppDataSource } from '../config/database';
-import { Product } from '../entities/Product';
-import { Pharmacy } from '../entities/Pharmacy';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { ApiResponse, PaginationQuery, ProductStatus } from '../types';
-import { validate } from 'class-validator';
-import { logger } from '../utils/logger';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
+import { ApiResponse, PaginationQuery } from '../types';
+import { asyncHandler } from '../middleware/errorHandler';
+import { ProductService } from '../services/ProductService';
 
 /**
  * @swagger
@@ -80,62 +76,24 @@ export class ProductController {
    *         description: Products retrieved successfully
    */
   static getProducts = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-    const productRepository = AppDataSource.getRepository(Product);
-    
     const { page = 1, limit = 20, category, search, requiresPrescription } = req.query as PaginationQuery & {
       category?: string;
       search?: string;
       requiresPrescription?: string;
     };
 
-    const offset = (page - 1) * limit;
+    const filters = {
+      category,
+      search,
+      requiresPrescription: requiresPrescription ? requiresPrescription === 'true' : undefined
+    };
 
-    let queryBuilder = productRepository
-      .createQueryBuilder('product')
-      .leftJoinAndSelect('product.pharmacy', 'pharmacy')
-      .where('product.status = :status', { status: ProductStatus.ACTIVE })
-      .andWhere('pharmacy.isVerified = :isVerified', { isVerified: true })
-      .andWhere('pharmacy.isActive = :isActive', { isActive: true });
-
-    // Apply filters
-    if (category) {
-      queryBuilder = queryBuilder.andWhere('product.category = :category', { category });
-    }
-
-    if (search) {
-      queryBuilder = queryBuilder.andWhere(
-        '(product.name ILIKE :search OR product.description ILIKE :search)',
-        { search: `%${search}%` }
-      );
-    }
-
-    if (requiresPrescription !== undefined) {
-      queryBuilder = queryBuilder.andWhere('product.requiresPrescription = :requiresPrescription', {
-        requiresPrescription: requiresPrescription === 'true'
-      });
-    }
-
-    // Get total count for pagination
-    const total = await queryBuilder.getCount();
-
-    // Get paginated results
-    const products = await queryBuilder
-      .orderBy('product.createdAt', 'DESC')
-      .skip(offset)
-      .take(limit)
-      .getMany();
-
-    const totalPages = Math.ceil(total / limit);
+    const result = await ProductService.getProducts(page, limit, filters);
 
     const response: ApiResponse = {
       success: true,
-      data: products,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages
-      }
+      data: result.products,
+      pagination: result.pagination
     };
 
     res.status(200).json(response);
@@ -161,19 +119,7 @@ export class ProductController {
    *         description: Product not found
    */
   static getProductById = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-    const productRepository = AppDataSource.getRepository(Product);
-    
-    const product = await productRepository.findOne({
-      where: { 
-        id: req.params.id,
-        status: ProductStatus.ACTIVE
-      },
-      relations: ['pharmacy']
-    });
-
-    if (!product) {
-      throw new AppError('Product not found', 404);
-    }
+    const product = await ProductService.getProductById(req.params.id);
 
     const response: ApiResponse = {
       success: true,
@@ -203,44 +149,19 @@ export class ProductController {
    *         description: Product created successfully
    */
   static createProduct = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const productRepository = AppDataSource.getRepository(Product);
-    const pharmacyRepository = AppDataSource.getRepository(Pharmacy);
-    
-    // Verify pharmacy exists and is verified
-    const pharmacy = await pharmacyRepository.findOne({ 
-      where: { 
-        id: req.user!.userId,
-        isVerified: true,
-        isActive: true
-      } 
-    });
-
-    if (!pharmacy) {
-      throw new AppError('Pharmacy not found or not verified', 404);
-    }
-
     const { name, description, price, stockQuantity, category, requiresPrescription, imageUrl } = req.body;
+    
+    const productData = {
+      name,
+      description,
+      price,
+      stockQuantity,
+      category,
+      requiresPrescription,
+      imageUrl
+    };
 
-    const product = new Product();
-    product.name = name;
-    product.description = description;
-    product.price = price;
-    product.stockQuantity = stockQuantity;
-    product.category = category;
-    product.requiresPrescription = requiresPrescription || false;
-    product.imageUrl = imageUrl;
-    product.pharmacyId = pharmacy.id;
-    product.status = ProductStatus.PENDING_APPROVAL;
-
-    // Validate product data
-    const errors = await validate(product);
-    if (errors.length > 0) {
-      throw new AppError('Validation failed', 400);
-    }
-
-    await productRepository.save(product);
-
-    logger.info(`Product created by pharmacy ${pharmacy.name}: ${product.name}`);
+    const product = await ProductService.createProduct(req.user!.userId, productData);
 
     const response: ApiResponse = {
       success: true,
@@ -277,44 +198,19 @@ export class ProductController {
    *         description: Product updated successfully
    */
   static updateProduct = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const productRepository = AppDataSource.getRepository(Product);
-    
-    const product = await productRepository.findOne({
-      where: { 
-        id: req.params.id,
-        pharmacyId: req.user!.userId
-      }
-    });
-
-    if (!product) {
-      throw new AppError('Product not found or you don\'t have permission to update it', 404);
-    }
-
     const { name, description, price, stockQuantity, category, requiresPrescription, imageUrl } = req.body;
+    
+    const updateData = {
+      name,
+      description,
+      price,
+      stockQuantity,
+      category,
+      requiresPrescription,
+      imageUrl
+    };
 
-    // Update product fields
-    if (name) product.name = name;
-    if (description) product.description = description;
-    if (price !== undefined) product.price = price;
-    if (stockQuantity !== undefined) product.stockQuantity = stockQuantity;
-    if (category) product.category = category;
-    if (requiresPrescription !== undefined) product.requiresPrescription = requiresPrescription;
-    if (imageUrl) product.imageUrl = imageUrl;
-
-    // Reset to pending approval if product was active
-    if (product.status === ProductStatus.ACTIVE) {
-      product.status = ProductStatus.PENDING_APPROVAL;
-    }
-
-    // Validate updated product data
-    const errors = await validate(product);
-    if (errors.length > 0) {
-      throw new AppError('Validation failed', 400);
-    }
-
-    await productRepository.save(product);
-
-    logger.info(`Product updated: ${product.name}`);
+    const product = await ProductService.updateProduct(req.user!.userId, req.params.id, updateData);
 
     const response: ApiResponse = {
       success: true,
@@ -345,22 +241,7 @@ export class ProductController {
    *         description: Product deleted successfully
    */
   static deleteProduct = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const productRepository = AppDataSource.getRepository(Product);
-    
-    const product = await productRepository.findOne({
-      where: { 
-        id: req.params.id,
-        pharmacyId: req.user!.userId
-      }
-    });
-
-    if (!product) {
-      throw new AppError('Product not found or you don\'t have permission to delete it', 404);
-    }
-
-    await productRepository.remove(product);
-
-    logger.info(`Product deleted: ${product.name}`);
+    await ProductService.deleteProduct(req.user!.userId, req.params.id);
 
     const response: ApiResponse = {
       success: true,
@@ -388,33 +269,14 @@ export class ProductController {
    *         description: Pharmacy products retrieved successfully
    */
   static getProductsByPharmacy = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-    const productRepository = AppDataSource.getRepository(Product);
-    
     const { page = 1, limit = 20 } = req.query as PaginationQuery;
-    const offset = (page - 1) * limit;
-
-    const [products, total] = await productRepository.findAndCount({
-      where: { 
-        pharmacyId: req.params.pharmacyId,
-        status: ProductStatus.ACTIVE
-      },
-      relations: ['pharmacy'],
-      order: { createdAt: 'DESC' },
-      skip: offset,
-      take: limit
-    });
-
-    const totalPages = Math.ceil(total / limit);
+    
+    const result = await ProductService.getProductsByPharmacy(req.params.pharmacyId, page, limit);
 
     const response: ApiResponse = {
       success: true,
-      data: products,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages
-      }
+      data: result.products,
+      pagination: result.pagination
     };
 
     res.status(200).json(response);
@@ -431,53 +293,15 @@ export class ProductController {
    *         description: Categories retrieved successfully
    */
   static getCategories = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-    const productRepository = AppDataSource.getRepository(Product);
-    
-    try {
-      // Get distinct categories from products
-      const categories = await productRepository
-        .createQueryBuilder('product')
-        .select('DISTINCT product.category', 'category')
-        .where('product.status = :status', { status: ProductStatus.ACTIVE })
-        .andWhere('product.category IS NOT NULL')
-        .andWhere('product.category != :empty', { empty: '' })
-        .getRawMany();
+    const categories = await ProductService.getCategories();
 
-      const categoryList = categories.map(item => item.category).filter(Boolean);
+    const response: ApiResponse = {
+      success: true,
+      data: { categories },
+      message: 'Categories retrieved successfully'
+    };
 
-      const response: ApiResponse = {
-        success: true,
-        data: {
-          categories: categoryList.length > 0 ? categoryList : [
-            'Pain Relief',
-            'Blood Pressure', 
-            'Vitamins',
-            'Antibiotics',
-            'Diabetes'
-          ]
-        },
-        message: 'Categories retrieved successfully'
-      };
-
-      res.status(200).json(response);
-    } catch (error) {
-      // Fallback to default categories
-      const response: ApiResponse = {
-        success: true,
-        data: {
-          categories: [
-            'Pain Relief',
-            'Blood Pressure', 
-            'Vitamins',
-            'Antibiotics',
-            'Diabetes'
-          ]
-        },
-        message: 'Categories retrieved successfully'
-      };
-
-      res.status(200).json(response);
-    }
+    res.status(200).json(response);
   });
 
   /**
@@ -491,49 +315,22 @@ export class ProductController {
    *         description: Pharmacies retrieved successfully
    */
   static getPharmacies = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-    const pharmacyRepository = AppDataSource.getRepository(Pharmacy);
-    
-    try {
-      // Get all active and verified pharmacies
-      const pharmacies = await pharmacyRepository
-        .createQueryBuilder('pharmacy')
-        .select(['pharmacy.id', 'pharmacy.name'])
-        .where('pharmacy.isActive = :isActive', { isActive: true })
-        .andWhere('pharmacy.isVerified = :isVerified', { isVerified: true })
-        .getMany();
+    const pharmacyData = await ProductService.getVerifiedPharmacies();
+    const pharmacyList = pharmacyData.map(pharmacy => pharmacy.name).filter(Boolean);
 
-      const pharmacyList = pharmacies.map(pharmacy => pharmacy.name).filter(Boolean);
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        pharmacies: pharmacyList.length > 0 ? pharmacyList : [
+          'MedMart Pharmacy',
+          'HealthPlus Pharmacy', 
+          'WellCare Pharmacy',
+          'CityMed Pharmacy'
+        ]
+      },
+      message: 'Pharmacies retrieved successfully'
+    };
 
-      const response: ApiResponse = {
-        success: true,
-        data: {
-          pharmacies: pharmacyList.length > 0 ? pharmacyList : [
-            'MedMart Pharmacy',
-            'HealthPlus Pharmacy', 
-            'WellCare Pharmacy',
-            'CityMed Pharmacy'
-          ]
-        },
-        message: 'Pharmacies retrieved successfully'
-      };
-
-      res.status(200).json(response);
-    } catch (error) {
-      // Fallback to default pharmacies
-      const response: ApiResponse = {
-        success: true,
-        data: {
-          pharmacies: [
-            'MedMart Pharmacy',
-            'HealthPlus Pharmacy', 
-            'WellCare Pharmacy',
-            'CityMed Pharmacy'
-          ]
-        },
-        message: 'Pharmacies retrieved successfully'
-      };
-
-      res.status(200).json(response);
-    }
+    res.status(200).json(response);
   });
 }

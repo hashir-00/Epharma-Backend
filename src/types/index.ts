@@ -3,7 +3,6 @@ export enum UserRole {
   ADMIN = 'admin',
   PHARMACY = 'pharmacy'
 }
-
 export enum OrderStatus {
   PENDING = 'pending',
   APPROVED = 'approved',

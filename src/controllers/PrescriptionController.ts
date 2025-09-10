@@ -1,12 +1,8 @@
 import { Request, Response } from 'express';
-import { AppDataSource } from '../config/database';
-import { Prescription } from '../entities/Prescription';
-import { User } from '../entities/User';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { ApiResponse, PaginationQuery, PrescriptionStatus } from '../types';
-import { validate } from 'class-validator';
-import { logger } from '../utils/logger';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
+import { asyncHandler, AppError } from '../middleware/errorHandler';
+import { PrescriptionService } from '../services/PrescriptionService';
 import path from 'path';
 
 /**
@@ -73,50 +69,24 @@ export class PrescriptionController {
    *                   $ref: '#/components/schemas/PrescriptionResponse'
    */
   static uploadPrescription = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const prescriptionRepository = AppDataSource.getRepository(Prescription);
-    const userRepository = AppDataSource.getRepository(User);
-
     // Check if file was uploaded
     if (!req.file) {
       throw new AppError('Prescription file is required', 400);
     }
 
-    // Verify user exists
-    const user = await userRepository.findOne({ where: { id: req.user!.userId } });
-    if (!user) {
-      throw new AppError('User not found', 404);
-    }
+    const fileData = {
+      originalName: req.file.originalname,
+      fileName: req.file.filename,
+      fileSize: req.file.size,
+      mimeType: req.file.mimetype,
+      filePath: req.file.path
+    };
 
-    const prescription = new Prescription();
-    prescription.userId = user.id;
-    prescription.fileName = req.file.filename;
-    prescription.filePath = req.file.path;
-    prescription.originalName = req.file.originalname;
-    prescription.fileSize = req.file.size;
-    prescription.mimeType = req.file.mimetype;
-    prescription.status = PrescriptionStatus.PENDING;
-
-    // Validate prescription data
-    const errors = await validate(prescription);
-    if (errors.length > 0) {
-      throw new AppError('Validation failed', 400);
-    }
-
-    await prescriptionRepository.save(prescription);
-
-    logger.info(`Prescription uploaded by user ${user.email}: ${prescription.fileName}`);
+    const prescription = await PrescriptionService.uploadPrescription(req.user!.userId, fileData);
 
     const response: ApiResponse = {
       success: true,
-      data: {
-        id: prescription.id,
-        fileName: prescription.fileName,
-        originalName: prescription.originalName,
-        fileSize: prescription.fileSize,
-        mimeType: prescription.mimeType,
-        status: prescription.status,
-        createdAt: prescription.createdAt
-      },
+      data: prescription,
       message: 'Prescription uploaded successfully'
     };
 
@@ -156,35 +126,14 @@ export class PrescriptionController {
    *         description: Prescriptions retrieved successfully
    */
   static getUserPrescriptions = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const prescriptionRepository = AppDataSource.getRepository(Prescription);
-    
     const { page = 1, limit = 20, status } = req.query as PaginationQuery & { status?: PrescriptionStatus };
-    const offset = (page - 1) * limit;
-
-    const whereClause: any = { userId: req.user!.userId };
-    if (status) {
-      whereClause.status = status;
-    }
-
-    const [prescriptions, total] = await prescriptionRepository.findAndCount({
-      where: whereClause,
-      order: { createdAt: 'DESC' },
-      skip: offset,
-      take: limit,
-      select: ['id', 'fileName', 'originalName', 'fileSize', 'mimeType', 'status', 'adminNotes', 'createdAt', 'updatedAt']
-    });
-
-    const totalPages = Math.ceil(total / limit);
+    
+    const result = await PrescriptionService.getUserPrescriptions(req.user!.userId, page, limit, status);
 
     const response: ApiResponse = {
       success: true,
-      data: prescriptions,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages
-      }
+      data: result.prescriptions,
+      pagination: result.pagination
     };
 
     res.status(200).json(response);
@@ -212,19 +161,7 @@ export class PrescriptionController {
    *         description: Prescription not found
    */
   static getPrescriptionById = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const prescriptionRepository = AppDataSource.getRepository(Prescription);
-    
-    const prescription = await prescriptionRepository.findOne({
-      where: { 
-        id: req.params.id,
-        userId: req.user!.userId
-      },
-      select: ['id', 'fileName', 'originalName', 'fileSize', 'mimeType', 'status', 'adminNotes', 'createdAt', 'updatedAt']
-    });
-
-    if (!prescription) {
-      throw new AppError('Prescription not found', 404);
-    }
+    const prescription = await PrescriptionService.getPrescriptionById(req.params.id, req.user!.userId);
 
     const response: ApiResponse = {
       success: true,
@@ -257,18 +194,7 @@ export class PrescriptionController {
    *         description: Prescription not found
    */
   static downloadPrescription = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const prescriptionRepository = AppDataSource.getRepository(Prescription);
-    
-    const prescription = await prescriptionRepository.findOne({
-      where: { 
-        id: req.params.id,
-        userId: req.user!.userId
-      }
-    });
-
-    if (!prescription) {
-      throw new AppError('Prescription not found', 404);
-    }
+    const prescription = await PrescriptionService.getPrescriptionById(req.params.id, req.user!.userId);
 
     // Set appropriate headers for file download
     res.setHeader('Content-Disposition', `attachment; filename="${prescription.originalName}"`);
@@ -300,29 +226,7 @@ export class PrescriptionController {
    *         description: Prescription not found
    */
   static deletePrescription = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const prescriptionRepository = AppDataSource.getRepository(Prescription);
-    
-    const prescription = await prescriptionRepository.findOne({
-      where: { 
-        id: req.params.id,
-        userId: req.user!.userId
-      }
-    });
-
-    if (!prescription) {
-      throw new AppError('Prescription not found', 404);
-    }
-
-    // Only allow deletion if prescription is pending or rejected
-    if (prescription.status === PrescriptionStatus.APPROVED) {
-      throw new AppError('Cannot delete approved prescription', 400);
-    }
-
-    await prescriptionRepository.remove(prescription);
-
-    // TODO: Delete the actual file from storage
-
-    logger.info(`Prescription deleted by user: ${prescription.fileName}`);
+    await PrescriptionService.deletePrescription(req.params.id, req.user!.userId);
 
     const response: ApiResponse = {
       success: true,
