@@ -105,14 +105,15 @@ export class UserController {
    *         description: Profile updated successfully
    */
   static updateProfile = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const { firstName, lastName, phone, address, age } = req.body;
+    const { firstName, lastName, phone, address, age,email } = req.body;
 
     const updatedUser = await UserService.updateUserProfile(req.user!.userId, {
       firstName,
       lastName,
       phone,
       address,
-      age
+      age,
+      email
     });
 
     const response: ApiResponse = {
@@ -152,10 +153,10 @@ export class UserController {
    *         description: Password changed successfully
    */
   static changePassword = asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const { currentPassword, newPassword } = req.body;
+    const { oldPassword, newPassword } = req.body;
 
     await UserService.changePassword(req.user!.userId, {
-      currentPassword,
+      currentPassword: oldPassword,
       newPassword
     });
 

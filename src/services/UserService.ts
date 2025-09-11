@@ -28,6 +28,7 @@ export interface UpdateProfileData {
   phone?: string;
   address?: string;
   age: number;
+  email: string;
 }
 
 export interface ChangePasswordData {
@@ -73,7 +74,7 @@ export class UserService {
       throw new AppError('User not found', 404);
     }
 
-    const { firstName, lastName, phone, address, age } = updateData;
+    const { firstName, lastName, phone, address, age ,email} = updateData;
 
     // Update user fields
     if (firstName) user.firstName = firstName;
@@ -81,6 +82,7 @@ export class UserService {
     if (phone) user.phone = phone;
     if (address) user.address = address;
     if (age) user.age = age;
+    if (email) user.email = email;
     // Validate updated user data
     const errors = await validate(user);
     if (errors.length > 0) {
